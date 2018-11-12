@@ -42,6 +42,7 @@ open class BuildCommitDistribution : DefaultTask() {
     val commitDistributionToolingApiJar = project.objects.fileProperty()
 
     init {
+        onlyIf { forkPointCommitRequired() || anyExplicitlySetPerformanceTestCommitBaseline() != null }
         commitDistributionHome.set(project.rootProject.layout.buildDirectory.dir(commitDistributionVersion.map { "distributions/gradle-$it" }))
         commitDistributionToolingApiJar.set(project.rootProject.layout.buildDirectory.file(commitDistributionVersion.map { "distributions/gradle-tooling-api-$it.jar" }))
     }

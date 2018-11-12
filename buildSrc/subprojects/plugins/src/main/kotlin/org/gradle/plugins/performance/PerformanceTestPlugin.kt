@@ -51,11 +51,6 @@ object PropertyNames {
 }
 
 
-private
-val commitVersionRegex = """(\d+(\.\d+)+)-commit-[a-f0-9]+""".toRegex()
-
-
-private
 object Config {
 
     val baseLineList = listOf("1.1", "1.12", "2.0", "2.1", "2.4", "2.9", "2.12", "2.14.1", "last").toString()
@@ -86,7 +81,7 @@ class PerformanceTestPlugin : Plugin<Project> {
         configureGeneratorTasks()
 
         val prepareSamplesTask = createPrepareSamplesTask()
-        val configurePerformanceTestBaseline = createConfigurePerformanceTestBaselineTask()
+        val buildCommitDistribution = createBuildCommitDistributionTask()
 
         createCleanSamplesTask()
 
@@ -94,7 +89,7 @@ class PerformanceTestPlugin : Plugin<Project> {
         createDistributedPerformanceTestTasks(performanceTestSourceSet)
 
         tasks.withType<PerformanceTest>().configureEach {
-            dependsOn(prepareSamplesTask, configurePerformanceTestBaseline)
+            dependsOn(prepareSamplesTask, buildCommitDistribution)
         }
 
         createRebaselineTask(performanceTestSourceSet)
@@ -103,44 +98,13 @@ class PerformanceTestPlugin : Plugin<Project> {
     }
 
     private
-    fun Project.createConfigurePerformanceTestBaselineTask(): TaskProvider<Task> {
-        val forkPointCommitRequired = { _: Task -> !currentBranchIsMasterOrRelease() && allPerformanceTestsHaveDefaultBaselines() }
-        val determineForkPointCommit = tasks.register("determineForkPointCommit", DetermineForkPointCommitBaseline::class) {
-            onlyIf(forkPointCommitRequired)
-        }
-        val buildCommitDistribution = tasks.register("buildCommitDistribution", BuildCommitDistribution::class) {
-            commitDistributionVersion.set(determineForkPointCommit.flatMap { it.forkPointCommitBaselineVersion })
-            dependsOn(determineForkPointCommit)
-            onlyIf {
-                anyPerformanceTestHasCommitBaseline() || forkPointCommitRequired.invoke(it)
-            }
-        }
-        return tasks.register("configurePerformanceTestBaseline") {
-            dependsOn(buildCommitDistribution)
-            onlyIf(forkPointCommitRequired)
-            doLast {
-                project.tasks.withType(PerformanceTest::class) {
-                    baselines = determineForkPointCommit.get().forkPointCommitBaselineVersion.get()
-                }
-            }
+    fun Project.createBuildCommitDistributionTask(): TaskProvider<BuildCommitDistribution> {
+        val determineCommitBaseline = tasks.register("determineCommitBaseline", DetermineCommitBaseline::class)
+        return tasks.register("buildCommitDistribution", BuildCommitDistribution::class) {
+            commitDistributionVersion.set(determineCommitBaseline.flatMap { it.commitBaselineVersion })
+            dependsOn(determineCommitBaseline)
         }
     }
-
-    private
-    fun Project.allPerformanceTestsHaveDefaultBaselines() =
-        tasks.withType(PerformanceTest::class).toList().all { it.baselines.isNullOrEmpty() || it.baselines == "defaults" || it.baselines == Config.baseLineList }
-
-    private
-    fun Project.anyPerformanceTestHasCommitBaseline() =
-        tasks.withType(PerformanceTest::class).any { it.baselines?.matches(commitVersionRegex) == true }
-
-    private
-    fun Project.currentBranchIsMasterOrRelease() =
-        when (stringPropertyOrNull(PropertyNames.branchName)) {
-            "master" -> true
-            "release" -> true
-            else -> false
-        }
 
     private
     fun Project.createRebaselineTask(performanceTestSourceSet: SourceSet) {

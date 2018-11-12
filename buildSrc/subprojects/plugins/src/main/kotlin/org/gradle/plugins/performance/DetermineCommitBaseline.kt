@@ -17,18 +17,58 @@
 package org.gradle.plugins.performance
 
 import org.gradle.api.DefaultTask
+import org.gradle.api.Task
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.TaskAction
 import org.gradle.kotlin.dsl.*
+import org.gradle.testing.PerformanceTest
 
 
-open class DetermineForkPointCommitBaseline : DefaultTask() {
+val commitVersionRegex = """(\d+(\.\d+)+)-commit-[a-f0-9]+""".toRegex()
+
+
+fun Task.currentBranchIsMasterOrRelease() =
+    when (project.stringPropertyOrNull(PropertyNames.branchName)) {
+        "master" -> true
+        "release" -> true
+        else -> false
+    }
+
+
+fun Task.allPerformanceTestsHaveDefaultBaselines() =
+    project.tasks
+        .withType(PerformanceTest::class)
+        .toList()
+        .all { it.baselines.isNullOrEmpty() || it.baselines == "defaults" || it.baselines == Config.baseLineList }
+
+
+fun Task.anyExplicitlySetPerformanceTestCommitBaseline() =
+    project.tasks
+        .withType(PerformanceTest::class)
+        .map(PerformanceTest::getBaselines)
+        .firstOrNull { true == it?.matches(commitVersionRegex) }
+
+
+fun Task.forkPointCommitRequired() =
+    !currentBranchIsMasterOrRelease() && allPerformanceTestsHaveDefaultBaselines()
+
+
+open class DetermineCommitBaseline : DefaultTask() {
+    init {
+        onlyIf { forkPointCommitRequired() || anyExplicitlySetPerformanceTestCommitBaseline() != null }
+    }
+
     @Internal
-    val forkPointCommitBaselineVersion = project.objects.property<String>()
+    val commitBaselineVersion = project.objects.property<String>()
 
     @TaskAction
     fun determineForkPointCommitBaseline() {
-        forkPointCommitBaselineVersion.set(forkPointCommitBaseline())
+        if (forkPointCommitRequired()) {
+            commitBaselineVersion.set(forkPointCommitBaseline())
+            project.tasks.withType(PerformanceTest::class).forEach { it.baselines = commitBaselineVersion.get() }
+        } else {
+            commitBaselineVersion.set(anyExplicitlySetPerformanceTestCommitBaseline())
+        }
     }
 
     private
